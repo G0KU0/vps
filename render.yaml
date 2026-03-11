@@ -6,11 +6,11 @@ services:
     plan: free
     region: frankfurt
     envVars:
-      - key: SSH_USER
-        value: root
-      - key: SSH_PASS
-        value: "2003"
       - key: ROOT_PASS
         value: "2003"
+      - key: PORT
+        value: "10000"
+      - key: BORE_PORT
+        value: "48251"
       - key: BORE_SERVER
         value: bore.pub
