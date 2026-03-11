@@ -33,23 +33,18 @@ RUN wget -q https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2
 
 RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
-# SSH ELŐKONFIGURÁCIÓ — már a build-nél beállítjuk
 RUN mkdir -p /var/run/sshd /root/.ssh && \
     chmod 700 /root /root/.ssh && \
-    # Root shell beállítása
     sed -i 's|root:x:0:0:root:/root:.*|root:x:0:0:root:/root:/bin/bash|' /etc/passwd && \
-    # Root jelszó beállítása (2003)
     echo 'root:2003' | chpasswd && \
-    # Root fiók feloldása
-    passwd -u root 2>/dev/null || true && \
-    # SSH host kulcsok generálása
+    passwd -u root 2>/dev/null ; \
+    rm -f /etc/ssh/ssh_host_* && \
     ssh-keygen -t rsa -b 4096 -f /etc/ssh/ssh_host_rsa_key -N '' -q && \
     ssh-keygen -t ecdsa -b 521 -f /etc/ssh/ssh_host_ecdsa_key -N '' -q && \
     ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N '' -q && \
     chmod 600 /etc/ssh/ssh_host_*_key && \
     chmod 644 /etc/ssh/ssh_host_*_key.pub
 
-# SSHD_CONFIG — teljes felülírás a build-nél
 RUN echo 'Port 22' > /etc/ssh/sshd_config && \
     echo 'AddressFamily any' >> /etc/ssh/sshd_config && \
     echo 'ListenAddress 0.0.0.0' >> /etc/ssh/sshd_config && \
@@ -76,7 +71,6 @@ RUN echo 'Port 22' > /etc/ssh/sshd_config && \
     echo 'AcceptEnv LANG LC_*' >> /etc/ssh/sshd_config && \
     echo 'LogLevel INFO' >> /etc/ssh/sshd_config
 
-# SSH CONFIG TESZTELÉS a build-nél
 RUN /usr/sbin/sshd -t
 
 RUN mkdir -p /workspace /data /var/www/html
