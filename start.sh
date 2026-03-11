@@ -8,12 +8,9 @@ W="\033[1;37m"
 D="\033[1;90m"
 N="\033[0m"
 
-SSH_USER="${SSH_USER:-root}"
-SSH_PASS="${SSH_PASS:-2003}"
 ROOT_PASS="${ROOT_PASS:-2003}"
 PORT="${PORT:-10000}"
 BORE_SERVER="${BORE_SERVER:-bore.pub}"
-BORE_PORT="${BORE_PORT:-48251}"
 
 cleanup() {
     kill $(jobs -p) 2>/dev/null
@@ -35,207 +32,153 @@ echo -e "${C}══════════════════════�
 echo ""
 
 # ══════════════════════════════════════
-# 1. ROOT FELHASZNÁLÓ — TELJES FIX
+# 1. ROOT FELHASZNÁLÓ
 # ══════════════════════════════════════
-echo -e "${C}[1/6]${W} Root hozzáférés beállítása...${N}"
+echo -e "${C}[1/6]${W} Root beállítása...${N}"
 
-# Root shell beállítása /bin/bash-ra
+# Shell fix
 sed -i 's|root:x:0:0:root:/root:.*|root:x:0:0:root:/root:/bin/bash|' /etc/passwd 2>/dev/null || true
-chsh -s /bin/bash root 2>/dev/null || true
 
-# Root fiók feloldása (Docker-ben alapból zárolva lehet)
+# Fiók feloldás
 passwd -u root 2>/dev/null || true
 
-# Jelszó beállítása
+# Shadow fix — ! és * eltávolítása
+SHADOW_HASH=$(grep "^root:" /etc/shadow 2>/dev/null | cut -d: -f2)
+if echo "$SHADOW_HASH" | grep -qE '^[!*]'; then
+    echo -e "  ${Y}⚠${N} Root fiók zárolva volt — feloldás..."
+fi
+
+# Jelszó beállítás
 echo "root:${ROOT_PASS}" | chpasswd 2>/dev/null || true
 
-# Shadow fájl fix — eltávolítjuk a zárolást jelző ! és * karaktereket
-sed -i 's|^root:!|root:|' /etc/shadow 2>/dev/null || true
-sed -i 's|^root:\*|root:|' /etc/shadow 2>/dev/null || true
+# Újra feloldjuk a chpasswd után is
+passwd -u root 2>/dev/null || true
 
-# Újra beállítjuk a jelszót a shadow fix után
-echo "root:${ROOT_PASS}" | chpasswd 2>/dev/null || true
-
-# Root könyvtár beállítás
-mkdir -p /root/.ssh 2>/dev/null || true
-chmod 700 /root 2>/dev/null || true
-chmod 700 /root/.ssh 2>/dev/null || true
-
-# Munkaterületek
-mkdir -p /workspace /data 2>/dev/null || true
+mkdir -p /root/.ssh /workspace /data 2>/dev/null || true
+chmod 700 /root /root/.ssh 2>/dev/null || true
 
 echo -e "  ${G}✓${N} Root: ${G}root${N} / Jelszó: ${G}${ROOT_PASS}${N}"
 
-# ══════════════════════════════════════
-# 2. SSH SZERVER — TELJES ÚJRAKONFIGURÁLÁS
-# ══════════════════════════════════════
-echo -e "${C}[2/6]${W} SSH szerver konfigurálása és indítása...${N}"
+# Ellenőrzés
+SHADOW_CHECK=$(grep "^root:" /etc/shadow 2>/dev/null | cut -d: -f2 | head -c 1)
+if [ "$SHADOW_CHECK" = "!" ] || [ "$SHADOW_CHECK" = "*" ]; then
+    echo -e "  ${R}✗${N} Root ZÁROLVA maradt! Brute-force fix..."
+    sed -i 's|^root:!|root:|' /etc/shadow 2>/dev/null || true
+    sed -i 's|^root:\*|root:|' /etc/shadow 2>/dev/null || true
+    echo "root:${ROOT_PASS}" | chpasswd 2>/dev/null || true
+fi
+echo ""
 
-# sshd futtatási könyvtár
+# ══════════════════════════════════════
+# 2. SSH SZERVER
+# ══════════════════════════════════════
+echo -e "${C}[2/6]${W} SSH szerver indítása...${N}"
+
 mkdir -p /var/run/sshd 2>/dev/null || true
 chmod 755 /var/run/sshd 2>/dev/null || true
 
-# SSH host kulcsok ÚJRAGENERÁLÁSA helyes jogosultságokkal
-rm -f /etc/ssh/ssh_host_*
-ssh-keygen -t rsa -b 4096 -f /etc/ssh/ssh_host_rsa_key -N '' -q 2>/dev/null || true
-ssh-keygen -t ecdsa -b 521 -f /etc/ssh/ssh_host_ecdsa_key -N '' -q 2>/dev/null || true
-ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N '' -q 2>/dev/null || true
-
-# Jogosultságok fixálása
+# Host kulcsok ellenőrzés
+if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+    echo -e "  ${D}Host kulcsok generálása...${N}"
+    ssh-keygen -t rsa -b 4096 -f /etc/ssh/ssh_host_rsa_key -N '' -q 2>/dev/null || true
+    ssh-keygen -t ecdsa -b 521 -f /etc/ssh/ssh_host_ecdsa_key -N '' -q 2>/dev/null || true
+    ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N '' -q 2>/dev/null || true
+fi
 chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null || true
 chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
-chown root:root /etc/ssh/ssh_host_* 2>/dev/null || true
 
-# TELJES sshd_config FELÜLÍRÁSA — Docker-kompatibilis beállítások
-cat > /etc/ssh/sshd_config <<'SSHCFG'
-# ======================================
-# SSH Server Config — Docker Compatible
-# ======================================
-
-# Alap beállítások
-Port 22
-AddressFamily any
-ListenAddress 0.0.0.0
-
-# Host kulcsok
-HostKey /etc/ssh/ssh_host_rsa_key
-HostKey /etc/ssh/ssh_host_ecdsa_key
-HostKey /etc/ssh/ssh_host_ed25519_key
-
-# Bejelentkezés
-PermitRootLogin yes
-PasswordAuthentication yes
-PermitEmptyPasswords no
-PubkeyAuthentication yes
-AuthorizedKeysFile .ssh/authorized_keys
-
-# PAM KIKAPCSOLVA — Docker-ben nem működik rendesen
-UsePAM no
-
-# Challenge-response kikapcsolva
-KbdInteractiveAuthentication no
-
-# SFTP — FileZilla-hoz szükséges
-Subsystem sftp /usr/lib/openssh/sftp-server
-
-# Hálózat
-AllowTcpForwarding yes
-GatewayPorts yes
-X11Forwarding no
-TCPKeepAlive yes
-
-# Kapcsolat életben tartás
-ClientAliveInterval 30
-ClientAliveCountMax 120
-
-# Egyéb
-PrintMotd yes
-PrintLastLog yes
-AcceptEnv LANG LC_*
-PermitUserEnvironment yes
-MaxAuthTries 10
-MaxSessions 20
-LoginGraceTime 120
-
-# Logging
-SyslogFacility AUTH
-LogLevel INFO
-SSHCFG
-
-echo -e "  ${G}✓${N} sshd_config felülírva (Docker-kompatibilis)"
-
-# SSH config tesztelése
-echo -e "  ${D}  SSH konfiguráció tesztelése...${N}"
+# Config teszt
 /usr/sbin/sshd -t 2>/tmp/sshd_test.log
-if [ $? -eq 0 ]; then
-    echo -e "  ${G}✓${N} SSH konfiguráció: OK"
-else
-    echo -e "  ${R}✗${N} SSH konfigurációs hiba:"
+if [ $? -ne 0 ]; then
+    echo -e "  ${R}✗${N} Config hiba — javítás..."
     cat /tmp/sshd_test.log
-    echo -e "  ${Y}  Javítás: KbdInteractiveAuthentication eltávolítása...${N}"
-    # Régebbi OpenSSH nem ismeri ezt a direktívát
-    sed -i '/KbdInteractiveAuthentication/d' /etc/ssh/sshd_config
-    /usr/sbin/sshd -t 2>/tmp/sshd_test2.log
-    if [ $? -eq 0 ]; then
-        echo -e "  ${G}✓${N} SSH konfiguráció javítva: OK"
-    else
-        echo -e "  ${R}✗${N} Még mindig hibás:"
-        cat /tmp/sshd_test2.log
-    fi
 fi
 
-# SSH indítása
-echo -e "  ${D}  SSH szerver indítása...${N}"
-/usr/sbin/sshd -E /tmp/sshd.log 2>/dev/null
-SSHD_EXIT=$?
+# SSH indítás
+/usr/sbin/sshd -E /tmp/sshd.log 2>/dev/null || true
+sleep 1
 
-if [ $SSHD_EXIT -eq 0 ]; then
-    echo -e "  ${G}✓${N} SSH szerver fut (port 22)"
+# Ellenőrzés
+if pgrep -x sshd >/dev/null 2>&1; then
+    echo -e "  ${G}✓${N} SSH szerver FUT (PID: $(pgrep -x sshd | head -1))"
 else
-    echo -e "  ${R}✗${N} SSH indítás sikertelen (exit: $SSHD_EXIT)"
-    echo -e "  ${D}  Log:${N}"
-    cat /tmp/sshd.log 2>/dev/null | tail -20
-    # Második próba debug módban
-    echo -e "  ${Y}  Újrapróbálás...${N}"
-    /usr/sbin/sshd -D -e > /tmp/sshd_debug.log 2>&1 &
+    echo -e "  ${R}✗${N} SSH NEM indult — debug:"
+    cat /tmp/sshd.log 2>/dev/null | tail -10
+    echo -e "  ${Y}  Újrapróbálás -D módban...${N}"
+    /usr/sbin/sshd -D -E /tmp/sshd.log 2>/dev/null &
     sleep 2
     if pgrep -x sshd >/dev/null 2>&1; then
-        echo -e "  ${G}✓${N} SSH szerver fut (2. próba)"
-    else
-        echo -e "  ${R}✗${N} SSH nem indult el"
-        cat /tmp/sshd_debug.log 2>/dev/null | tail -20
+        echo -e "  ${G}✓${N} SSH fut (2. próba)"
     fi
 fi
 
-# SSH tesztelése — helyi csatlakozás ellenőrzése
-sleep 1
-if pgrep -x sshd >/dev/null 2>&1; then
-    echo -e "  ${G}✓${N} SSH folyamat fut (PID: $(pgrep -x sshd | head -1))"
+# Helyi SSH teszt
+echo -e "  ${D}Helyi SSH teszt...${N}"
+if ss -tlnp 2>/dev/null | grep -q ":22 "; then
+    echo -e "  ${G}✓${N} Port 22 figyel"
 else
-    echo -e "  ${R}✗${N} SSH folyamat NEM fut!"
+    echo -e "  ${R}✗${N} Port 22 NEM figyel!"
+    ss -tlnp 2>/dev/null
 fi
+echo ""
 
 # ══════════════════════════════════════
-# 3. BORE TUNNEL — FIX PORT: 48251
+# 3. BORE TUNNEL — RANDOM PORT (mindig működik)
 # ══════════════════════════════════════
-echo -e "${C}[3/6]${W} bore.pub tunnel indítása (fix port: ${BORE_PORT})...${N}"
+echo -e "${C}[3/6]${W} bore.pub tunnel indítása...${N}"
+echo -e "  ${D}(bore.pub random portot ad — MINDIG működik)${N}"
+
 BORE_LOG="/tmp/bore.log"
+echo '{"status":"connecting","host":"bore.pub","port":"","user":"root","password":"2003"}' > /tmp/tunnel-info.json
 
-# Tunnel info beállítása
-cat > /tmp/tunnel-info.json <<EOF
-{
-    "status":"connecting",
-    "host":"${BORE_SERVER}",
-    "port":"${BORE_PORT}",
-    "ssh_cmd":"ssh root@${BORE_SERVER} -p ${BORE_PORT}",
-    "user":"root",
-    "password":"${ROOT_PASS}",
-    "updated":"$(date -Iseconds)"
-}
-EOF
+# Régi bore leállítása
+pkill -f "bore local" 2>/dev/null || true
+sleep 1
 
-# bore indítása FIX PORTTAL
-(bore local 22 --to "$BORE_SERVER" --port "$BORE_PORT" > "$BORE_LOG" 2>&1) &
+# bore indítása RANDOM porttal (NEM használunk --port-ot!)
+(bore local 22 --to "$BORE_SERVER" > "$BORE_LOG" 2>&1) &
 BORE_PID=$!
 
-# Várakozás
-TUNNEL_OK=""
-for i in $(seq 1 30); do
-    if grep -qi "listening" "$BORE_LOG" 2>/dev/null || grep -qi "remote" "$BORE_LOG" 2>/dev/null || grep -q "$BORE_PORT" "$BORE_LOG" 2>/dev/null; then
-        TUNNEL_OK="yes"
+# Port kiolvasása a bore kimenetéből
+BORE_PORT=""
+echo -e "  ${D}Várakozás a tunnel-re...${N}"
+for i in $(seq 1 45); do
+    # bore kimenet: "listening at bore.pub:XXXXX"
+    if [ -f "$BORE_LOG" ]; then
+        BORE_PORT=$(grep -oE 'bore\.pub:[0-9]+' "$BORE_LOG" 2>/dev/null | grep -oE '[0-9]+$' | tail -1 || echo "")
+        if [ -z "$BORE_PORT" ]; then
+            BORE_PORT=$(grep -oE 'remote_port=[0-9]+' "$BORE_LOG" 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "")
+        fi
+        if [ -z "$BORE_PORT" ]; then
+            BORE_PORT=$(grep -oE ':[0-9]{4,5}' "$BORE_LOG" 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "")
+        fi
+    fi
+
+    if [ -n "$BORE_PORT" ]; then
         break
     fi
-    # Ha hiba van a logban, jelezzük
-    if grep -qi "error" "$BORE_LOG" 2>/dev/null; then
-        echo -e "  ${R}✗${N} bore hiba észlelve:"
-        cat "$BORE_LOG"
-        break
+
+    # Hiba ellenőrzés
+    if grep -qi "error\|panic\|failed" "$BORE_LOG" 2>/dev/null; then
+        echo -e "  ${R}✗${N} bore hiba:"
+        cat "$BORE_LOG" 2>/dev/null
+        echo ""
+        # Újrapróbálás
+        echo -e "  ${Y}  Újrapróbálás...${N}"
+        pkill -f "bore local" 2>/dev/null || true
+        sleep 3
+        (bore local 22 --to "$BORE_SERVER" > "$BORE_LOG" 2>&1) &
+        BORE_PID=$!
     fi
+
     sleep 2
 done
 
-if [ -n "$TUNNEL_OK" ]; then
-    echo -e "  ${G}✓${N} Tunnel aktív: ${Y}${BORE_SERVER}:${BORE_PORT}${N}"
+if [ -n "$BORE_PORT" ]; then
+    echo -e "  ${G}✓${N} Tunnel AKTÍV!"
+    echo -e "  ${G}✓${N} Cím: ${Y}${BORE_SERVER}:${BORE_PORT}${N}"
+    echo -e "  ${G}✓${N} SSH: ${G}ssh root@${BORE_SERVER} -p ${BORE_PORT}${N}"
+
     cat > /tmp/tunnel-info.json <<EOF
 {
     "status":"active",
@@ -243,42 +186,19 @@ if [ -n "$TUNNEL_OK" ]; then
     "port":"${BORE_PORT}",
     "ssh_cmd":"ssh root@${BORE_SERVER} -p ${BORE_PORT}",
     "user":"root",
-    "password":"${ROOT_PASS}",
+    "password":"2003",
     "updated":"$(date -Iseconds)"
 }
 EOF
 else
-    echo -e "  ${Y}⚠${N} Tunnel indítás folyamatban (port: ${BORE_PORT})"
-    echo -e "  ${D}  bore log:${N}"
-    cat "$BORE_LOG" 2>/dev/null | tail -5
+    echo -e "  ${R}✗${N} Tunnel NEM jött létre!"
+    echo -e "  ${D}bore log:${N}"
+    cat "$BORE_LOG" 2>/dev/null
     echo ""
-    # Ha a fix port foglalt, próbáljuk port nélkül
-    if grep -qi "error" "$BORE_LOG" 2>/dev/null; then
-        echo -e "  ${Y}⚠${N} Fix port (${BORE_PORT}) valószínűleg foglalt."
-        echo -e "  ${Y}  Próba random porttal...${N}"
-        pkill -f "bore local" 2>/dev/null || true
-        sleep 1
-        (bore local 22 --to "$BORE_SERVER" > "$BORE_LOG" 2>&1) &
-        BORE_PID=$!
-        sleep 10
-        RANDOM_PORT=$(grep -oP '(?<=:)\d{4,5}' "$BORE_LOG" 2>/dev/null | tail -1 || echo "")
-        if [ -n "$RANDOM_PORT" ]; then
-            BORE_PORT="$RANDOM_PORT"
-            echo -e "  ${G}✓${N} Tunnel aktív random porton: ${Y}${BORE_SERVER}:${BORE_PORT}${N}"
-            cat > /tmp/tunnel-info.json <<EOF
-{
-    "status":"active",
-    "host":"${BORE_SERVER}",
-    "port":"${BORE_PORT}",
-    "ssh_cmd":"ssh root@${BORE_SERVER} -p ${BORE_PORT}",
-    "user":"root",
-    "password":"${ROOT_PASS}",
-    "updated":"$(date -Iseconds)"
-}
-EOF
-        fi
-    fi
+    echo -e "  ${Y}A háttérmonitor 90 másodpercenként próbálja újra.${N}"
+    echo -e "  ${Y}Vagy a web terminálban: vps-tunnel-restart${N}"
 fi
+echo ""
 
 # ══════════════════════════════════════
 # 4. FÁJLKEZELŐ
@@ -292,6 +212,7 @@ filebrowser config set --address 127.0.0.1 --port 8080 --baseurl /files \
     --baseurl /files --root / > /tmp/filebrowser.log 2>&1) &
 sleep 1
 echo -e "  ${G}✓${N} Fájlkezelő: ${Y}/files/${N}"
+echo ""
 
 # ══════════════════════════════════════
 # 5. WEB TERMINÁL
@@ -305,6 +226,7 @@ echo -e "${C}[5/6]${W} Web terminál indítása...${N}"
     bash -l > /tmp/ttyd.log 2>&1) &
 sleep 1
 echo -e "  ${G}✓${N} Web terminál: ${Y}/terminal/${N}"
+echo ""
 
 # ══════════════════════════════════════
 # DASHBOARD HTML
@@ -348,8 +270,6 @@ body{background:#0f0f1a;color:#c0caf5;font-family:'Segoe UI',monospace;min-heigh
 .sv{font-size:20px;font-weight:bold;color:#7aa2f7}
 .sl{font-size:11px;color:#565f89;margin-top:2px}
 .n{text-align:center;color:#565f89;font-size:11px;margin:8px 0}
-.fix{background:#9ece6a22;border:1px solid #9ece6a44;border-radius:8px;padding:10px 14px;margin:8px 0;text-align:center}
-.fix b{color:#9ece6a}
 .warn{background:#e0af6822;border:1px solid #e0af6844;border-radius:8px;padding:10px 14px;margin:8px 0;font-size:12px;color:#e0af68}
 </style>
 </head>
@@ -378,8 +298,8 @@ body{background:#0f0f1a;color:#c0caf5;font-family:'Segoe UI',monospace;min-heigh
 <h2><span class="dot wait" id="td"></span> SSH / SFTP Tunnel</h2>
 <div id="ts" style="padding:6px 0;color:#e0af68">⏳ Betöltés...</div>
 <div id="tt" style="display:none">
-<div class="r"><span class="l">Host</span><span class="v h" id="th">bore.pub</span></div>
-<div class="r"><span class="l">Port</span><span class="v h" id="tp">48251</span></div>
+<div class="r"><span class="l">Host</span><span class="v h" id="th">-</span></div>
+<div class="r"><span class="l">Port</span><span class="v h" id="tp">-</span></div>
 <div class="r"><span class="l">Felhasználó</span><span class="v" id="tu">root</span></div>
 <div class="r"><span class="l">Jelszó</span><span class="v" id="tw">2003</span></div>
 </div>
@@ -388,16 +308,16 @@ body{background:#0f0f1a;color:#c0caf5;font-family:'Segoe UI',monospace;min-heigh
 <div class="card">
 <h2>🔌 SSH csatlakozás</h2>
 <p style="font-size:12px;color:#565f89;margin-bottom:8px">Ezt futtasd a saját gépeden:</p>
-<div class="cmd" onclick="cc(this)" id="sc"><span>ssh root@bore.pub -p 48251</span><span class="ch">📋 másolás</span></div>
+<div class="cmd" onclick="cc(this)" id="sc"><span>ssh root@bore.pub -p XXXXX</span><span class="ch">📋 másolás</span></div>
 <p style="font-size:12px;color:#565f89;margin-top:8px">Jelszó: <span style="color:#9ece6a;font-weight:bold">2003</span></p>
-<div class="warn">💡 Ha "Connection refused" hibát kapsz, várj 1-2 percet és próbáld újra. Ha továbbra sem megy, nézd meg a /terminal/ oldalt és írd be: <b>vps-tunnel-restart</b></div>
+<div class="warn">💡 A port szám a Tunnel kártyán látható fent. Újraindításnál változhat!</div>
 </div>
 
 <div class="card">
 <h2>📁 FileZilla (SFTP)</h2>
 <p style="font-size:12px;color:#565f89;margin-bottom:8px">Írd be a FileZilla-ba:</p>
 <div class="r"><span class="l">Kiszolgáló (Host)</span><span class="v h" id="fh">bore.pub</span></div>
-<div class="r"><span class="l">Port</span><span class="v h" id="fp">48251</span></div>
+<div class="r"><span class="l">Port</span><span class="v h" id="fp">-</span></div>
 <div class="r"><span class="l">Protokoll</span><span class="v">SFTP</span></div>
 <div class="r"><span class="l">Bejelentkezés típusa</span><span class="v">Normál (Normal)</span></div>
 <div class="r"><span class="l">Felhasználó</span><span class="v" id="fu">root</span></div>
@@ -413,7 +333,7 @@ body{background:#0f0f1a;color:#c0caf5;font-family:'Segoe UI',monospace;min-heigh
 </div>
 </div>
 
-<div class="n">Automatikus frissítés 15 másodpercenként</div>
+<div class="n">Automatikus frissítés 10 másodpercenként</div>
 </div>
 
 <script>
@@ -435,9 +355,9 @@ function rf(){
         const dot=document.getElementById('td');
         const ts=document.getElementById('ts');
         const tt=document.getElementById('tt');
-        if(d.status==='active'){
+        if(d.status==='active' && d.port){
             dot.className='dot on';
-            ts.innerHTML='<span style="color:#9ece6a">✅ Tunnel aktív!</span>';
+            ts.innerHTML='<span style="color:#9ece6a">✅ Tunnel aktív! Port: <b>'+d.port+'</b></span>';
             tt.style.display='block';
             document.getElementById('th').textContent=d.host;
             document.getElementById('tp').textContent=d.port;
@@ -450,17 +370,17 @@ function rf(){
             document.getElementById('fw').textContent=d.password||'2003';
         } else if(d.status==='connecting'){
             dot.className='dot wait';
-            ts.innerHTML='⏳ Tunnel csatlakozás...';
-            tt.style.display='block';
+            ts.innerHTML='⏳ Tunnel csatlakozás folyamatban...';
+            tt.style.display='none';
         } else {
             dot.className='dot off';
-            ts.innerHTML='❌ Tunnel hiba — /terminal/ oldalon: vps-tunnel-restart';
-            tt.style.display='block';
+            ts.innerHTML='❌ Tunnel nem elérhető — /terminal/ oldalon: <b>vps-tunnel-restart</b>';
+            tt.style.display='none';
         }
     }).catch(()=>{});
 }
 rf();
-setInterval(rf,15000);
+setInterval(rf,10000);
 </script>
 </body>
 </html>
@@ -482,152 +402,171 @@ echo "  RAM:    $(free -h | awk '/Mem:/{print $7 " szabad / " $2 " össz."}')"
 echo "  Disk:   $(df -h / | awk 'NR==2{print $4 " szabad / " $2 " össz."}')"
 echo ""
 if [ -f /tmp/tunnel-info.json ]; then
-    S=$(cat /tmp/tunnel-info.json | jq -r '.status' 2>/dev/null || echo "unknown")
-    H=$(cat /tmp/tunnel-info.json | jq -r '.host' 2>/dev/null || echo "bore.pub")
-    P=$(cat /tmp/tunnel-info.json | jq -r '.port' 2>/dev/null || echo "48251")
-    echo "  Tunnel:  $S"
-    echo "  SSH:     ssh root@${H} -p ${P}"
-    echo "  Jelszó:  2003"
-    echo ""
-    echo "  FileZilla: Host=${H}  Port=${P}  SFTP  User=root  Pass=2003"
+    S=$(cat /tmp/tunnel-info.json | jq -r '.status' 2>/dev/null || echo "?")
+    H=$(cat /tmp/tunnel-info.json | jq -r '.host' 2>/dev/null || echo "?")
+    P=$(cat /tmp/tunnel-info.json | jq -r '.port' 2>/dev/null || echo "?")
+    if [ "$S" = "active" ] && [ -n "$P" ] && [ "$P" != "null" ] && [ "$P" != "" ]; then
+        echo -e "\033[1;32m  Tunnel: AKTÍV\033[0m"
+        echo "  SSH:       ssh root@${H} -p ${P}"
+        echo "  Jelszó:    2003"
+        echo ""
+        echo "  FileZilla: Host=${H}  Port=${P}  SFTP  User=root  Pass=2003"
+    else
+        echo -e "\033[1;33m  Tunnel: ${S}\033[0m"
+        echo "  Futtasd: vps-tunnel-restart"
+    fi
 fi
 echo ""
-echo "  SSH folyamat: $(pgrep -x sshd >/dev/null 2>&1 && echo 'FUT' || echo 'NEM FUT')"
-echo "  bore folyamat: $(pgrep -f 'bore local' >/dev/null 2>&1 && echo 'FUT' || echo 'NEM FUT')"
+echo "  SSH proc:  $(pgrep -x sshd >/dev/null 2>&1 && echo 'FUT' || echo 'NEM FUT')"
+echo "  bore proc: $(pgrep -f 'bore local' >/dev/null 2>&1 && echo 'FUT' || echo 'NEM FUT')"
+echo "  Port 22:   $(ss -tlnp 2>/dev/null | grep -q ':22 ' && echo 'FIGYEL' || echo 'NEM FIGYEL')"
 echo ""
 VIEOF
 chmod +x /usr/local/bin/vps-info
 
 cat > /usr/local/bin/vps-tunnel << 'VTEOF'
 #!/bin/bash
+echo ""
+echo "=== TUNNEL INFO ==="
 if [ -f /tmp/tunnel-info.json ]; then
     cat /tmp/tunnel-info.json | jq . 2>/dev/null || cat /tmp/tunnel-info.json
-else
-    echo "Nincs tunnel info."
 fi
 echo ""
-echo "SSH:     ssh root@bore.pub -p 48251"
-echo "Jelszó:  2003"
+echo "=== BORE LOG (utolsó 15 sor) ==="
+cat /tmp/bore.log 2>/dev/null | tail -15
 echo ""
-echo "bore log:"
-cat /tmp/bore.log 2>/dev/null | tail -10
+echo "=== BORE FOLYAMAT ==="
+pgrep -fa "bore local" 2>/dev/null || echo "NEM FUT"
+echo ""
 VTEOF
 chmod +x /usr/local/bin/vps-tunnel
 
 cat > /usr/local/bin/vps-tunnel-restart << 'VREOF'
 #!/bin/bash
 BORE_SERVER="${BORE_SERVER:-bore.pub}"
-BORE_PORT="${BORE_PORT:-48251}"
 echo ""
 echo "═══════════════════════════════════"
-echo "  Tunnel újraindítás"
+echo "  TUNNEL ÚJRAINDÍTÁS"
 echo "═══════════════════════════════════"
 echo ""
 
-# SSH ellenőrzés
-echo "[1/3] SSH szerver ellenőrzése..."
+# 1. SSH ellenőrzés
+echo "[1/3] SSH ellenőrzés..."
 if ! pgrep -x sshd >/dev/null 2>&1; then
-    echo "  SSH nem fut — újraindítás..."
+    echo "  SSH nem fut — indítás..."
     /usr/sbin/sshd -E /tmp/sshd.log 2>/dev/null || true
     sleep 1
 fi
 if pgrep -x sshd >/dev/null 2>&1; then
     echo "  ✓ SSH fut"
 else
-    echo "  ✗ SSH NEM fut! Debug log:"
-    /usr/sbin/sshd -d -e 2>&1 | head -20
+    echo "  ✗ SSH NEM FUT!"
+fi
+if ss -tlnp 2>/dev/null | grep -q ":22 "; then
+    echo "  ✓ Port 22 figyel"
+else
+    echo "  ✗ Port 22 nem figyel!"
 fi
 
-# bore leállítás
+# 2. bore leállítás
 echo ""
-echo "[2/3] bore tunnel leállítása..."
+echo "[2/3] bore leállítás..."
 pkill -f "bore local" 2>/dev/null || true
 sleep 3
 
-# bore újraindítás
+# 3. bore indítás (random port)
 echo ""
-echo "[3/3] bore tunnel indítása (port: ${BORE_PORT})..."
-echo '{"status":"connecting","host":"bore.pub","port":"'${BORE_PORT}'","user":"root","password":"2003"}' > /tmp/tunnel-info.json
-(bore local 22 --to "$BORE_SERVER" --port "$BORE_PORT" > /tmp/bore.log 2>&1) &
-echo "  Várakozás (~20mp)..."
+echo "[3/3] bore indítás..."
+echo '{"status":"connecting"}' > /tmp/tunnel-info.json
+(bore local 22 --to "$BORE_SERVER" > /tmp/bore.log 2>&1) &
+echo "  Várakozás..."
 
-for i in $(seq 1 30); do
-    if grep -qi "listening" /tmp/bore.log 2>/dev/null || grep -qi "remote" /tmp/bore.log 2>/dev/null || grep -q "$BORE_PORT" /tmp/bore.log 2>/dev/null; then
+for i in $(seq 1 45); do
+    P=""
+    if [ -f /tmp/bore.log ]; then
+        P=$(grep -oE 'bore\.pub:[0-9]+' /tmp/bore.log 2>/dev/null | grep -oE '[0-9]+$' | tail -1 || echo "")
+        if [ -z "$P" ]; then
+            P=$(grep -oE 'remote_port=[0-9]+' /tmp/bore.log 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "")
+        fi
+        if [ -z "$P" ]; then
+            P=$(grep -oE ':[0-9]{4,5}' /tmp/bore.log 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "")
+        fi
+    fi
+    if [ -n "$P" ]; then
         cat > /tmp/tunnel-info.json <<EOF
-{"status":"active","host":"${BORE_SERVER}","port":"${BORE_PORT}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${BORE_PORT}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
+{"status":"active","host":"${BORE_SERVER}","port":"${P}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${P}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
 EOF
         echo ""
-        echo -e "\033[1;32m✅ Tunnel aktív!\033[0m"
-        echo -e "\033[1;32m   SSH:    ssh root@${BORE_SERVER} -p ${BORE_PORT}\033[0m"
-        echo -e "\033[1;32m   Jelszó: 2003\033[0m"
+        echo -e "\033[1;32m✅ Tunnel AKTÍV!\033[0m"
+        echo -e "\033[1;32m   SSH:      ssh root@${BORE_SERVER} -p ${P}\033[0m"
+        echo -e "\033[1;32m   Jelszó:   2003\033[0m"
+        echo -e "\033[1;32m   FileZilla: Host=${BORE_SERVER} Port=${P} SFTP\033[0m"
         echo ""
         exit 0
     fi
-    if grep -qi "error" /tmp/bore.log 2>/dev/null; then
+
+    if grep -qiE "error|panic|failed" /tmp/bore.log 2>/dev/null; then
         echo ""
         echo -e "\033[1;31m✗ bore hiba:\033[0m"
-        cat /tmp/bore.log
+        cat /tmp/bore.log 2>/dev/null
         echo ""
-        echo "Próba random porttal..."
+        echo "Újrapróbálás 5 mp múlva..."
         pkill -f "bore local" 2>/dev/null || true
-        sleep 2
+        sleep 5
         (bore local 22 --to "$BORE_SERVER" > /tmp/bore.log 2>&1) &
-        sleep 10
-        RP=$(grep -oP '(?<=:)\d{4,5}' /tmp/bore.log 2>/dev/null | tail -1 || echo "")
-        if [ -n "$RP" ]; then
-            cat > /tmp/tunnel-info.json <<EOF
-{"status":"active","host":"${BORE_SERVER}","port":"${RP}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${RP}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
-EOF
-            echo -e "\033[1;32m✅ Tunnel aktív random porton: ${RP}\033[0m"
-            echo -e "\033[1;32m   SSH:    ssh root@${BORE_SERVER} -p ${RP}\033[0m"
-            exit 0
-        fi
-        exit 1
     fi
+
     sleep 2
 done
+
 echo ""
 echo -e "\033[1;31m✗ Időtúllépés.\033[0m"
 echo "bore log:"
 cat /tmp/bore.log 2>/dev/null
 echo ""
-echo "Próbáld: vps-tunnel-restart"
 VREOF
 chmod +x /usr/local/bin/vps-tunnel-restart
 
-# SSH debug parancs
 cat > /usr/local/bin/vps-ssh-debug << 'SDEOF'
 #!/bin/bash
 echo ""
 echo "═══════════════════════════════════"
-echo "  SSH DEBUG INFORMÁCIÓK"
+echo "  SSH DEBUG"
 echo "═══════════════════════════════════"
 echo ""
-echo "1. SSH folyamat:"
+echo "1. sshd folyamat:"
 pgrep -xa sshd 2>/dev/null || echo "  NEM FUT!"
 echo ""
-echo "2. SSH port:"
-ss -tlnp 2>/dev/null | grep :22 || echo "  Port 22 nem figyel!"
+echo "2. Port 22:"
+ss -tlnp 2>/dev/null | grep :22 || echo "  NEM FIGYEL!"
 echo ""
-echo "3. Root fiók:"
+echo "3. Root passwd entry:"
 grep "^root:" /etc/passwd
 echo ""
-echo "4. Root shadow (zárolva?):"
-S=$(grep "^root:" /etc/shadow | cut -d: -f2 | head -c 3)
-if echo "$S" | grep -q '!' || echo "$S" | grep -q '*'; then
-    echo "  ⚠ ROOT FIÓK ZÁROLVA! Javítás: passwd -u root && echo root:2003 | chpasswd"
+echo "4. Root shadow (első 10 karakter):"
+grep "^root:" /etc/shadow | cut -d: -f2 | head -c 10
+echo "..."
+echo ""
+echo "5. Root zárolva?"
+S=$(grep "^root:" /etc/shadow | cut -d: -f2 | head -c 1)
+if [ "$S" = "!" ] || [ "$S" = "*" ]; then
+    echo "  ⚠ IGEN — ZÁROLVA!"
+    echo "  Javítás: passwd -u root && echo root:2003 | chpasswd"
 else
-    echo "  ✓ Root fiók aktív"
+    echo "  ✓ NEM zárolva"
 fi
 echo ""
-echo "5. SSH konfig teszt:"
+echo "6. sshd_config teszt:"
 /usr/sbin/sshd -t 2>&1
 echo ""
-echo "6. sshd log (utolsó 20 sor):"
+echo "7. sshd log (utolsó 20 sor):"
 cat /tmp/sshd.log 2>/dev/null | tail -20
 echo ""
-echo "7. bore log (utolsó 10 sor):"
+echo "8. bore log (utolsó 10 sor):"
 cat /tmp/bore.log 2>/dev/null | tail -10
+echo ""
+echo "9. bore folyamat:"
+pgrep -fa "bore local" 2>/dev/null || echo "  NEM FUT!"
 echo ""
 SDEOF
 chmod +x /usr/local/bin/vps-ssh-debug
@@ -636,19 +575,18 @@ chmod +x /usr/local/bin/vps-ssh-debug
 cat > /root/.bashrc << 'BEOF'
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 export TERM=xterm-256color
+export BORE_SERVER="${BORE_SERVER:-bore.pub}"
 
 if [ -z "$VPS_GREETED" ]; then
     export VPS_GREETED=1
     echo ""
-    echo -e "\033[1;36m  ═══════════════════════════════════════\033[0m"
-    echo -e "\033[1;36m   Üdvözöllek ROOT! — 7oq1_ VPS\033[0m"
-    echo -e "\033[1;36m  ═══════════════════════════════════════\033[0m"
+    echo -e "\033[1;36m  ═════════════════════════════════\033[0m"
+    echo -e "\033[1;36m   7oq1_ VPS — Üdvözöllek ROOT!\033[0m"
+    echo -e "\033[1;36m  ═════════════════════════════════\033[0m"
     echo ""
-    echo -e "\033[1;90m  Parancsok:\033[0m"
-    echo -e "\033[1;33m    vps-info\033[1;90m           → Rendszer & tunnel infó\033[0m"
-    echo -e "\033[1;33m    vps-tunnel\033[1;90m         → Tunnel állapot\033[0m"
-    echo -e "\033[1;33m    vps-tunnel-restart\033[1;90m → Tunnel újraindítás\033[0m"
-    echo -e "\033[1;33m    vps-ssh-debug\033[1;90m      → SSH hibakeresés\033[0m"
+    echo -e "\033[1;33m  vps-info\033[1;90m            → Infó + SSH cím\033[0m"
+    echo -e "\033[1;33m  vps-tunnel-restart\033[1;90m  → Tunnel újraindítás\033[0m"
+    echo -e "\033[1;33m  vps-ssh-debug\033[1;90m       → SSH hibakeresés\033[0m"
     echo ""
 fi
 BEOF
@@ -664,36 +602,34 @@ sed "s/__PORT__/${PORT}/g" /etc/nginx/nginx.conf.template > /etc/nginx/nginx.con
 # ══════════════════════════════════════
 echo ""
 echo -e "${C}════════════════════════════════════════════════════════${N}"
-echo -e "${G}          ✅  UBUNTU VPS AUTOMATIKUSAN KÉSZ!${N}"
+echo -e "${G}          ✅  UBUNTU VPS KÉSZ!${N}"
 echo -e "${C}════════════════════════════════════════════════════════${N}"
 echo ""
 echo -e "  ${W}Felhasználó:${N} ${G}root${N}"
 echo -e "  ${W}Jelszó:${N}      ${G}2003${N}"
 echo ""
-echo -e "  ${C}──── CSATLAKOZÁSI ADATOK ────${N}"
+if [ -n "$BORE_PORT" ]; then
+    echo -e "  ${W}SSH:${N}  ${G}ssh root@${BORE_SERVER} -p ${BORE_PORT}${N}"
+    echo -e "  ${W}Pass:${N} ${G}2003${N}"
+    echo ""
+    echo -e "  ${W}FileZilla:${N}"
+    echo -e "    Host: ${G}${BORE_SERVER}${N}"
+    echo -e "    Port: ${G}${BORE_PORT}${N}"
+    echo -e "    User: ${G}root${N}"
+    echo -e "    Pass: ${G}2003${N}"
+else
+    echo -e "  ${Y}Tunnel még csatlakozik — nézd a dashboardot${N}"
+fi
 echo ""
-echo -e "  ${W}SSH:${N}         ${G}ssh root@${BORE_SERVER} -p ${BORE_PORT}${N}"
-echo -e "  ${W}Jelszó:${N}      ${G}2003${N}"
+echo -e "  ${W}Böngésző:${N}"
+echo -e "    ${Y}https://<render-url>/${N}          Dashboard"
+echo -e "    ${Y}https://<render-url>/terminal/${N}  Terminál"
+echo -e "    ${Y}https://<render-url>/files/${N}     Fájlkezelő"
 echo ""
-echo -e "  ${W}FileZilla (SFTP):${N}"
-echo -e "    Host:    ${G}${BORE_SERVER}${N}"
-echo -e "    Port:    ${G}${BORE_PORT}${N}"
-echo -e "    User:    ${G}root${N}"
-echo -e "    Pass:    ${G}2003${N}"
-echo ""
-echo -e "  ${C}──── BÖNGÉSZŐ ────${N}"
-echo ""
-echo -e "  ${W}Dashboard:${N}   ${Y}https://<render-url>/${N}"
-echo -e "  ${W}Terminál:${N}    ${Y}https://<render-url>/terminal/${N}"
-echo -e "  ${W}Fájlkezelő:${N}  ${Y}https://<render-url>/files/${N}"
-echo ""
-echo -e "  ${C}──── SZOLGÁLTATÁSOK ────${N}"
-echo ""
+echo -e "  ${W}Szolgáltatások:${N}"
 echo -e "  SSH:         $(pgrep -x sshd >/dev/null 2>&1 && echo -e "${G}FUT${N}" || echo -e "${R}NEM FUT${N}")"
+echo -e "  Port 22:     $(ss -tlnp 2>/dev/null | grep -q ':22 ' && echo -e "${G}FIGYEL${N}" || echo -e "${R}NEM${N}")"
 echo -e "  bore:        $(pgrep -f 'bore local' >/dev/null 2>&1 && echo -e "${G}FUT${N}" || echo -e "${R}NEM FUT${N}")"
-echo -e "  ttyd:        $(pgrep -x ttyd >/dev/null 2>&1 && echo -e "${G}FUT${N}" || echo -e "${R}NEM FUT${N}")"
-echo -e "  filebrowser: $(pgrep -x filebrowser >/dev/null 2>&1 && echo -e "${G}FUT${N}" || echo -e "${R}NEM FUT${N}")"
-echo -e "  nginx:       ${G}INDUL${N}"
 echo ""
 echo -e "${C}════════════════════════════════════════════════════════${N}"
 
@@ -704,45 +640,34 @@ echo -e "${C}══════════════════════�
     while true; do
         sleep 90
 
-        # bore tunnel ellenőrzés
-        if ! pgrep -f "bore local" >/dev/null 2>&1; then
-            echo "[MONITOR] bore tunnel újraindítás (port: ${BORE_PORT})..."
-            (bore local 22 --to "$BORE_SERVER" --port "$BORE_PORT" > /tmp/bore.log 2>&1) &
-            sleep 15
-            if grep -qi "listening" /tmp/bore.log 2>/dev/null || grep -qi "remote" /tmp/bore.log 2>/dev/null || grep -q "$BORE_PORT" /tmp/bore.log 2>/dev/null; then
-                cat > /tmp/tunnel-info.json <<EOF
-{"status":"active","host":"${BORE_SERVER}","port":"${BORE_PORT}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${BORE_PORT}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
-EOF
-                echo "[MONITOR] Tunnel aktív: ${BORE_SERVER}:${BORE_PORT}"
-            else
-                # Próba random porttal ha fix port nem megy
-                if grep -qi "error" /tmp/bore.log 2>/dev/null; then
-                    pkill -f "bore local" 2>/dev/null || true
-                    sleep 2
-                    (bore local 22 --to "$BORE_SERVER" > /tmp/bore.log 2>&1) &
-                    sleep 15
-                    NP=$(grep -oP '(?<=:)\d{4,5}' /tmp/bore.log 2>/dev/null | tail -1 || echo "")
-                    if [ -n "$NP" ]; then
-                        cat > /tmp/tunnel-info.json <<EOF
-{"status":"active","host":"${BORE_SERVER}","port":"${NP}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${NP}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
-EOF
-                        echo "[MONITOR] Tunnel aktív random porton: ${NP}"
-                    fi
-                fi
-            fi
+        # Root fiók ellenőrzés
+        SCHECK=$(grep "^root:" /etc/shadow 2>/dev/null | cut -d: -f2 | head -c 1)
+        if [ "$SCHECK" = "!" ] || [ "$SCHECK" = "*" ]; then
+            passwd -u root 2>/dev/null || true
+            echo "root:2003" | chpasswd 2>/dev/null || true
         fi
 
         # SSH ellenőrzés
         if ! pgrep -x sshd >/dev/null 2>&1; then
-            echo "[MONITOR] SSH újraindítás..."
             /usr/sbin/sshd -E /tmp/sshd.log 2>/dev/null || true
         fi
 
-        # Root fiók ellenőrzés (zárolva lehet-e)
-        if grep "^root:" /etc/shadow 2>/dev/null | grep -q "^root:!" ; then
-            echo "[MONITOR] Root fiók zárolva — feloldás..."
-            passwd -u root 2>/dev/null || true
-            echo "root:2003" | chpasswd 2>/dev/null || true
+        # bore ellenőrzés
+        if ! pgrep -f "bore local" >/dev/null 2>&1; then
+            (bore local 22 --to "$BORE_SERVER" > /tmp/bore.log 2>&1) &
+            sleep 20
+            NP=""
+            if [ -f /tmp/bore.log ]; then
+                NP=$(grep -oE 'bore\.pub:[0-9]+' /tmp/bore.log 2>/dev/null | grep -oE '[0-9]+$' | tail -1 || echo "")
+                if [ -z "$NP" ]; then
+                    NP=$(grep -oE ':[0-9]{4,5}' /tmp/bore.log 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "")
+                fi
+            fi
+            if [ -n "$NP" ]; then
+                cat > /tmp/tunnel-info.json <<EOF
+{"status":"active","host":"${BORE_SERVER}","port":"${NP}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${NP}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
+EOF
+            fi
         fi
 
         # ttyd ellenőrzés
