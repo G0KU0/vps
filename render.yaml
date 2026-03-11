@@ -14,5 +14,3 @@ services:
         value: "2003"
       - key: BORE_SERVER
         value: bore.pub
-      - key: BORE_PORT
-        value: "48251"
