@@ -11,7 +11,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     make cmake pkg-config libssl-dev locales cron rsync jq tree \
     ncdu procps lsof file man-db less openssl ca-certificates \
     gnupg mc software-properties-common apt-transport-https \
-    lsb-release nginx \
+    lsb-release nginx passwd \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN locale-gen en_US.UTF-8
@@ -33,18 +33,7 @@ RUN wget -q https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2
 
 RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
-RUN mkdir -p /var/run/sshd && ssh-keygen -A && \
-    sed -i 's/#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
-    sed -i 's/UsePAM yes/UsePAM no/' /etc/ssh/sshd_config && \
-    grep -q "^Subsystem.*sftp" /etc/ssh/sshd_config || \
-    echo "Subsystem sftp /usr/lib/openssh/sftp-server" >> /etc/ssh/sshd_config && \
-    echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config && \
-    echo "ClientAliveInterval 30" >> /etc/ssh/sshd_config && \
-    echo "ClientAliveCountMax 120" >> /etc/ssh/sshd_config
-
-RUN mkdir -p /workspace /data /var/www/html
+RUN mkdir -p /workspace /data /var/www/html /var/run/sshd /root/.ssh
 
 COPY start.sh /start.sh
 COPY nginx.conf.template /etc/nginx/nginx.conf.template
