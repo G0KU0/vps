@@ -11,12 +11,15 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     sudo curl wget git nano vim htop tmux screen \
     bash-completion net-tools iputils-ping dnsutils iproute2 \
     traceroute zip unzip tar gzip bzip2 xz-utils p7zip-full \
-    python3 python3-pip python3-venv build-essential gcc g++ \
+    python3 python3-pip python3-venv python3-full build-essential gcc g++ \
     make cmake pkg-config libssl-dev locales cron rsync jq tree \
     ncdu procps lsof file man-db less openssl ca-certificates \
     gnupg mc software-properties-common apt-transport-https \
-    lsb-release nginx passwd supervisor \
+    lsb-release nginx passwd supervisor pipx \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# PIP TELEPÍTÉS ENGEDÉLYEZÉSE (Ubuntu 24.04 blokkolja alapból)
+RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED
 
 RUN locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8
