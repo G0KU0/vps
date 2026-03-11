@@ -34,9 +34,14 @@ RUN curl -fsSL \
     https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz \
     | tar xz -C /usr/local/bin/ && chmod +x /usr/local/bin/bore || true
 
-RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+RUN cd /tmp && \
+    curl -fsSL https://github.com/filebrowser/filebrowser/releases/download/v2.31.2/linux-amd64-filebrowser.tar.gz -o filebrowser.tar.gz && \
+    tar xzf filebrowser.tar.gz && \
+    mv filebrowser /usr/local/bin/filebrowser && \
+    chmod +x /usr/local/bin/filebrowser && \
+    rm -f filebrowser.tar.gz LICENSE README.md && \
+    /usr/local/bin/filebrowser version
 
-# Dropbear SSH kulcsok
 RUN rm -f /etc/dropbear/dropbear_rsa_host_key \
           /etc/dropbear/dropbear_ecdsa_host_key \
           /etc/dropbear/dropbear_ed25519_host_key && \
@@ -45,7 +50,6 @@ RUN rm -f /etc/dropbear/dropbear_rsa_host_key \
     dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key && \
     dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key
 
-# Felhasználók (jelszó: 2003)
 RUN echo 'root:2003' | chpasswd && \
     sed -i 's|root:x:0:0:root:/root:.*|root:x:0:0:root:/root:/bin/bash|' /etc/passwd
 
