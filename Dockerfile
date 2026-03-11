@@ -18,8 +18,18 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     lsb-release nginx passwd supervisor pipx \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# PIP TELEPÍTÉS ENGEDÉLYEZÉSE (Ubuntu 24.04 blokkolja alapból)
+# PIP engedélyezés
 RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED
+
+# SFTP-SERVER — minden lehetséges helyre symlink
+RUN mkdir -p /usr/libexec && \
+    ln -sf /usr/lib/openssh/sftp-server /usr/libexec/sftp-server && \
+    ln -sf /usr/lib/openssh/sftp-server /usr/local/bin/sftp-server && \
+    ln -sf /usr/lib/openssh/sftp-server /usr/bin/sftp-server && \
+    chmod +x /usr/lib/openssh/sftp-server && \
+    echo "SFTP-server elérési utak:" && \
+    ls -la /usr/lib/openssh/sftp-server && \
+    ls -la /usr/libexec/sftp-server
 
 RUN locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8
