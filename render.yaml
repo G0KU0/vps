@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: ubuntu-vps
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: frankfurt
+    envVars:
+      - key: SSH_USER
+        value: root
+      - key: SSH_PASS
+        value: "2003"
+      - key: ROOT_PASS
+        value: "2003"
+      - key: BORE_SERVER
+        value: bore.pub
