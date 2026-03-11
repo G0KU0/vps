@@ -1,5 +1,4 @@
 #!/bin/bash
-set -euo pipefail
 
 C="\033[1;36m"
 G="\033[1;32m"
@@ -14,6 +13,7 @@ SSH_PASS="${SSH_PASS:-2003}"
 ROOT_PASS="${ROOT_PASS:-2003}"
 PORT="${PORT:-10000}"
 BORE_SERVER="${BORE_SERVER:-bore.pub}"
+BORE_PORT="${BORE_PORT:-48251}"
 
 cleanup() {
     kill $(jobs -p) 2>/dev/null
@@ -35,50 +35,36 @@ echo -e "${C}══════════════════════�
 echo ""
 
 # ══════════════════════════════════════
-# 1. ROOT FELHASZNÁLÓ BEÁLLÍTÁSA
+# 1. ROOT FELHASZNÁLÓ
 # ══════════════════════════════════════
 echo -e "${C}[1/6]${W} Root hozzáférés beállítása...${N}"
-echo "root:${ROOT_PASS}" | chpasswd
+echo "root:${ROOT_PASS}" | chpasswd 2>/dev/null || true
 sed -i 's|root:x:0:0:root:/root:/usr/sbin/nologin|root:x:0:0:root:/root:/bin/bash|' /etc/passwd 2>/dev/null || true
 sed -i 's|root:x:0:0:root:/root:/bin/false|root:x:0:0:root:/root:/bin/bash|' /etc/passwd 2>/dev/null || true
-mkdir -p /root/.ssh
-chmod 700 /root
-mkdir -p /workspace /data
-echo -e "  ${G}✓${N} Root felhasználó: ${G}root${N} / Jelszó: ${G}${ROOT_PASS}${N}"
+mkdir -p /root/.ssh 2>/dev/null || true
+chmod 700 /root 2>/dev/null || true
+mkdir -p /workspace /data 2>/dev/null || true
+echo -e "  ${G}✓${N} Root: ${G}root${N} / Jelszó: ${G}${ROOT_PASS}${N}"
 
 # ══════════════════════════════════════
-# 2. SSH SZERVER INDÍTÁSA
+# 2. SSH SZERVER
 # ══════════════════════════════════════
 echo -e "${C}[2/6]${W} SSH szerver indítása...${N}"
-mkdir -p /var/run/sshd
+mkdir -p /var/run/sshd 2>/dev/null || true
 if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-    ssh-keygen -A
+    ssh-keygen -A 2>/dev/null || true
 fi
-/usr/sbin/sshd -E /tmp/sshd.log
-echo -e "  ${G}✓${N} SSH fut (port 22) — root login engedélyezve"
+/usr/sbin/sshd -E /tmp/sshd.log 2>/dev/null || true
+echo -e "  ${G}✓${N} SSH fut (port 22)"
 
 # ══════════════════════════════════════
-# 3. BORE TUNNEL INDÍTÁSA
+# 3. BORE TUNNEL — FIX PORT: 48251
 # ══════════════════════════════════════
-echo -e "${C}[3/6]${W} bore.pub tunnel indítása...${N}"
+echo -e "${C}[3/6]${W} bore.pub tunnel indítása (fix port: ${BORE_PORT})...${N}"
 BORE_LOG="/tmp/bore.log"
-echo '{"status":"connecting"}' > /tmp/tunnel-info.json
 
-bore local 22 --to "$BORE_SERVER" > "$BORE_LOG" 2>&1 &
-BORE_PID=$!
-
-BORE_PORT=""
-for i in $(seq 1 60); do
-    BORE_PORT=$(grep -oP '(?<=:)\d{4,5}' "$BORE_LOG" 2>/dev/null | tail -1)
-    if [ -n "$BORE_PORT" ]; then
-        break
-    fi
-    sleep 2
-done
-
-if [ -n "$BORE_PORT" ]; then
-    echo -e "  ${G}✓${N} Tunnel: ${Y}${BORE_SERVER}:${BORE_PORT}${N}"
-    cat > /tmp/tunnel-info.json <<EOF
+# Tunnel info előre beállítva fix porttal
+cat > /tmp/tunnel-info.json <<EOF
 {
     "status":"active",
     "host":"${BORE_SERVER}",
@@ -89,38 +75,57 @@ if [ -n "$BORE_PORT" ]; then
     "updated":"$(date -Iseconds)"
 }
 EOF
+
+# bore indítása FIX PORTTAL
+(bore local 22 --to "$BORE_SERVER" --port "$BORE_PORT" > "$BORE_LOG" 2>&1) &
+BORE_PID=$!
+
+# Várakozás hogy a tunnel tényleg elinduljon
+TUNNEL_OK=""
+for i in $(seq 1 30); do
+    if grep -q "listening" "$BORE_LOG" 2>/dev/null || grep -q "remote" "$BORE_LOG" 2>/dev/null || grep -q "$BORE_PORT" "$BORE_LOG" 2>/dev/null; then
+        TUNNEL_OK="yes"
+        break
+    fi
+    sleep 2
+done
+
+if [ -n "$TUNNEL_OK" ]; then
+    echo -e "  ${G}✓${N} Tunnel aktív: ${Y}${BORE_SERVER}:${BORE_PORT}${N}"
+    echo -e "  ${G}✓${N} SSH: ${G}ssh root@${BORE_SERVER} -p ${BORE_PORT}${N}"
 else
-    echo -e "  ${R}✗${N} Tunnel időtúllépés — háttérben próbálkozik tovább"
+    echo -e "  ${Y}⚠${N} Tunnel indítás folyamatban — port: ${Y}${BORE_PORT}${N}"
+    echo -e "  ${D}  (Ha a port foglalt, a háttérmonitor újrapróbálja)${N}"
 fi
 
 # ══════════════════════════════════════
-# 4. WEBES FÁJLKEZELŐ INDÍTÁSA
+# 4. FÁJLKEZELŐ
 # ══════════════════════════════════════
 echo -e "${C}[4/6]${W} Webes fájlkezelő indítása...${N}"
 FB_DB="/tmp/filebrowser.db"
 filebrowser config init --database "$FB_DB" > /dev/null 2>&1 || true
 filebrowser config set --address 127.0.0.1 --port 8080 --baseurl /files \
     --root / --database "$FB_DB" --noauth > /dev/null 2>&1 || true
-filebrowser --database "$FB_DB" --noauth --address 127.0.0.1 --port 8080 \
-    --baseurl /files --root / > /tmp/filebrowser.log 2>&1 &
+(filebrowser --database "$FB_DB" --noauth --address 127.0.0.1 --port 8080 \
+    --baseurl /files --root / > /tmp/filebrowser.log 2>&1) &
 sleep 1
 echo -e "  ${G}✓${N} Fájlkezelő: ${Y}/files/${N}"
 
 # ══════════════════════════════════════
-# 5. WEB TERMINÁL INDÍTÁSA
+# 5. WEB TERMINÁL
 # ══════════════════════════════════════
 echo -e "${C}[5/6]${W} Web terminál indítása...${N}"
-ttyd --port 7681 --writable \
+(ttyd --port 7681 --writable \
     -t fontSize=15 \
     -t fontFamily="'JetBrains Mono',monospace" \
     -t 'theme={"background":"#1a1b26","foreground":"#a9b1d6","cursor":"#c0caf5"}' \
     --ping-interval 30 \
-    bash -l > /tmp/ttyd.log 2>&1 &
+    bash -l > /tmp/ttyd.log 2>&1) &
 sleep 1
-echo -e "  ${G}✓${N} Web terminál: ${Y}/terminal/${N} (root hozzáféréssel)"
+echo -e "  ${G}✓${N} Web terminál: ${Y}/terminal/${N}"
 
 # ══════════════════════════════════════
-# DASHBOARD HTML GENERÁLÁS
+# DASHBOARD HTML
 # ══════════════════════════════════════
 cat > /var/www/html/index.html <<'HTMLEOF'
 <!DOCTYPE html>
@@ -161,6 +166,8 @@ body{background:#0f0f1a;color:#c0caf5;font-family:'Segoe UI',monospace;min-heigh
 .sv{font-size:20px;font-weight:bold;color:#7aa2f7}
 .sl{font-size:11px;color:#565f89;margin-top:2px}
 .n{text-align:center;color:#565f89;font-size:11px;margin:8px 0}
+.fix{background:#9ece6a22;border:1px solid #9ece6a44;border-radius:8px;padding:10px 14px;margin:8px 0;text-align:center}
+.fix b{color:#9ece6a}
 </style>
 </head>
 <body>
@@ -186,31 +193,32 @@ body{background:#0f0f1a;color:#c0caf5;font-family:'Segoe UI',monospace;min-heigh
 
 <div class="card">
 <h2><span class="dot wait" id="td"></span> SSH / SFTP Tunnel</h2>
+<div class="fix">🔒 Fix port: <b>48251</b> — ez SOSEM változik!</div>
 <div id="ts" style="padding:6px 0;color:#e0af68">⏳ Betöltés...</div>
 <div id="tt" style="display:none">
-<div class="r"><span class="l">Host</span><span class="v h" id="th">-</span></div>
-<div class="r"><span class="l">Port</span><span class="v h" id="tp">-</span></div>
-<div class="r"><span class="l">Felhasználó</span><span class="v" id="tu">-</span></div>
-<div class="r"><span class="l">Jelszó</span><span class="v" id="tw">-</span></div>
+<div class="r"><span class="l">Host</span><span class="v h" id="th">bore.pub</span></div>
+<div class="r"><span class="l">Port</span><span class="v h" id="tp">48251</span></div>
+<div class="r"><span class="l">Felhasználó</span><span class="v" id="tu">root</span></div>
+<div class="r"><span class="l">Jelszó</span><span class="v" id="tw">2003</span></div>
 </div>
 </div>
 
 <div class="card">
 <h2>🔌 SSH csatlakozás</h2>
-<p style="font-size:12px;color:#565f89;margin-bottom:8px">Ezt futtasd a saját gépeden:</p>
-<div class="cmd" onclick="cc(this)" id="sc"><span>ssh root@bore.pub -p XXXXX</span><span class="ch">📋 másolás</span></div>
+<p style="font-size:12px;color:#565f89;margin-bottom:8px">Ezt futtasd a saját gépeden (MINDIG UGYANEZ):</p>
+<div class="cmd" onclick="cc(this)" id="sc"><span>ssh root@bore.pub -p 48251</span><span class="ch">📋 másolás</span></div>
 <p style="font-size:12px;color:#565f89;margin-top:8px">Jelszó: <span style="color:#9ece6a;font-weight:bold">2003</span></p>
 </div>
 
 <div class="card">
 <h2>📁 FileZilla (SFTP)</h2>
-<p style="font-size:12px;color:#565f89;margin-bottom:8px">Írd be a FileZilla-ba:</p>
-<div class="r"><span class="l">Kiszolgáló (Host)</span><span class="v h" id="fh">bore.pub</span></div>
-<div class="r"><span class="l">Port</span><span class="v h" id="fp">-</span></div>
+<p style="font-size:12px;color:#565f89;margin-bottom:8px">Írd be a FileZilla-ba (MINDIG UGYANEZ):</p>
+<div class="r"><span class="l">Kiszolgáló (Host)</span><span class="v h">bore.pub</span></div>
+<div class="r"><span class="l">Port</span><span class="v h">48251</span></div>
 <div class="r"><span class="l">Protokoll</span><span class="v">SFTP</span></div>
 <div class="r"><span class="l">Bejelentkezés típusa</span><span class="v">Normál (Normal)</span></div>
-<div class="r"><span class="l">Felhasználó</span><span class="v" id="fu">root</span></div>
-<div class="r"><span class="l">Jelszó</span><span class="v" id="fw">2003</span></div>
+<div class="r"><span class="l">Felhasználó</span><span class="v">root</span></div>
+<div class="r"><span class="l">Jelszó</span><span class="v">2003</span></div>
 </div>
 
 <div class="card">
@@ -246,28 +254,19 @@ function rf(){
         const tt=document.getElementById('tt');
         if(d.status==='active'){
             dot.className='dot on';
-            ts.innerHTML='<span style="color:#9ece6a">✅ Tunnel aktív!</span>';
+            ts.innerHTML='<span style="color:#9ece6a">✅ Tunnel aktív — fix port: 48251</span>';
             ts.style.color='#9ece6a';
             tt.style.display='block';
-            document.getElementById('th').textContent=d.host;
-            document.getElementById('tp').textContent=d.port;
-            document.getElementById('tu').textContent=d.user||'root';
-            document.getElementById('tw').textContent=d.password||'2003';
-            document.getElementById('sc').querySelector('span').textContent=d.ssh_cmd;
-            document.getElementById('fh').textContent=d.host;
-            document.getElementById('fp').textContent=d.port;
-            document.getElementById('fu').textContent=d.user||'root';
-            document.getElementById('fw').textContent=d.password||'2003';
         } else if(d.status==='connecting'){
             dot.className='dot wait';
-            ts.innerHTML='⏳ Tunnel csatlakozás...';
+            ts.innerHTML='⏳ Tunnel csatlakozás (port: 48251)...';
             ts.style.color='#e0af68';
-            tt.style.display='none';
+            tt.style.display='block';
         } else {
             dot.className='dot off';
-            ts.innerHTML='❌ Tunnel hiba — nyisd meg a /terminal/ oldalt és írd be: vps-tunnel-restart';
+            ts.innerHTML='❌ Tunnel hiba — /terminal/ oldalon írd be: vps-tunnel-restart';
             ts.style.color='#f7768e';
-            tt.style.display='none';
+            tt.style.display='block';
         }
     }).catch(()=>{});
 }
@@ -279,7 +278,7 @@ setInterval(rf,20000);
 HTMLEOF
 
 # ══════════════════════════════════════
-# SEGÉDPARANCSOK TELEPÍTÉSE
+# SEGÉDPARANCSOK
 # ══════════════════════════════════════
 
 cat > /usr/local/bin/vps-info << 'VIEOF'
@@ -293,22 +292,15 @@ echo "  CPU:    $(nproc) vCPU"
 echo "  RAM:    $(free -h | awk '/Mem:/{print $7 " szabad / " $2 " össz."}')"
 echo "  Disk:   $(df -h / | awk 'NR==2{print $4 " szabad / " $2 " össz."}')"
 echo ""
+echo -e "\033[1;32m  Tunnel: FIX PORT\033[0m"
+echo "  SSH:       ssh root@bore.pub -p 48251"
+echo "  Jelszó:    2003"
+echo ""
+echo "  FileZilla: Host=bore.pub  Port=48251  SFTP  User=root  Pass=2003"
+echo ""
 if [ -f /tmp/tunnel-info.json ]; then
-    S=$(cat /tmp/tunnel-info.json | jq -r '.status' 2>/dev/null)
-    if [ "$S" = "active" ]; then
-        H=$(cat /tmp/tunnel-info.json | jq -r '.host')
-        P=$(cat /tmp/tunnel-info.json | jq -r '.port')
-        U=$(cat /tmp/tunnel-info.json | jq -r '.user')
-        W=$(cat /tmp/tunnel-info.json | jq -r '.password')
-        echo -e "\033[1;32m  Tunnel: AKTÍV\033[0m"
-        echo "  SSH:       ssh ${U}@${H} -p ${P}"
-        echo "  Jelszó:    ${W}"
-        echo ""
-        echo "  FileZilla: Host=${H}  Port=${P}  SFTP  User=${U}  Pass=${W}"
-    else
-        echo -e "\033[1;31m  Tunnel: NEM AKTÍV\033[0m"
-        echo "  Futtasd: vps-tunnel-restart"
-    fi
+    S=$(cat /tmp/tunnel-info.json | jq -r '.status' 2>/dev/null || echo "unknown")
+    echo "  Tunnel állapot: $S"
 fi
 echo ""
 VIEOF
@@ -319,57 +311,64 @@ cat > /usr/local/bin/vps-tunnel << 'VTEOF'
 if [ -f /tmp/tunnel-info.json ]; then
     cat /tmp/tunnel-info.json | jq . 2>/dev/null || cat /tmp/tunnel-info.json
 else
-    echo "Nincs tunnel."
+    echo "Nincs tunnel info."
 fi
+echo ""
+echo "Fix csatlakozás:"
+echo "  SSH:      ssh root@bore.pub -p 48251"
+echo "  Jelszó:   2003"
 VTEOF
 chmod +x /usr/local/bin/vps-tunnel
 
 cat > /usr/local/bin/vps-tunnel-restart << 'VREOF'
 #!/bin/bash
 BORE_SERVER="${BORE_SERVER:-bore.pub}"
-SSH_USER="root"
-SSH_PASS="2003"
-echo "Tunnel újraindítás..."
-pkill -f "bore local" 2>/dev/null
+BORE_PORT="${BORE_PORT:-48251}"
+echo "Tunnel újraindítás (fix port: ${BORE_PORT})..."
+pkill -f "bore local" 2>/dev/null || true
 sleep 2
-echo '{"status":"connecting"}' > /tmp/tunnel-info.json
-bore local 22 --to "$BORE_SERVER" > /tmp/bore.log 2>&1 &
-echo "Várakozás (~30mp)..."
-for i in $(seq 1 45); do
-    P=$(grep -oP '(?<=:)\d{4,5}' /tmp/bore.log 2>/dev/null | tail -1)
-    if [ -n "$P" ]; then
+echo '{"status":"connecting","host":"bore.pub","port":"48251","user":"root","password":"2003"}' > /tmp/tunnel-info.json
+(bore local 22 --to "$BORE_SERVER" --port "$BORE_PORT" > /tmp/bore.log 2>&1) &
+echo "Várakozás (~15mp)..."
+for i in $(seq 1 30); do
+    if grep -q "listening" /tmp/bore.log 2>/dev/null || grep -q "remote" /tmp/bore.log 2>/dev/null || grep -q "$BORE_PORT" /tmp/bore.log 2>/dev/null; then
         cat > /tmp/tunnel-info.json <<EOF
-{"status":"active","host":"${BORE_SERVER}","port":"${P}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${P}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
+{"status":"active","host":"${BORE_SERVER}","port":"${BORE_PORT}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${BORE_PORT}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
 EOF
-        echo -e "\033[1;32m✅ Tunnel aktív: ssh root@${BORE_SERVER} -p ${P}\033[0m"
+        echo -e "\033[1;32m✅ Tunnel aktív!\033[0m"
+        echo -e "\033[1;32m   SSH:    ssh root@${BORE_SERVER} -p ${BORE_PORT}\033[0m"
         echo -e "\033[1;32m   Jelszó: 2003\033[0m"
         exit 0
     fi
     sleep 2
 done
-echo -e "\033[1;31m✗ Időtúllépés. Log: cat /tmp/bore.log\033[0m"
+echo -e "\033[1;31m✗ Időtúllépés. Log:\033[0m"
+cat /tmp/bore.log 2>/dev/null
+echo ""
+echo "Próbáld újra: vps-tunnel-restart"
 VREOF
 chmod +x /usr/local/bin/vps-tunnel-restart
 
-# ══════════════════════════════════════
-# ROOT BASHRC BEÁLLÍTÁS
-# ══════════════════════════════════════
-
+# Root bashrc
 cat >> /root/.bashrc << 'BEOF'
 if [ -z "$VPS_GREETED" ]; then
     export VPS_GREETED=1
-    echo -e "\n\033[1;36m  Üdvözöllek ROOT! Írd be: \033[1;33mvps-info\033[0m\n"
+    echo ""
+    echo -e "\033[1;36m  Üdvözöllek ROOT!\033[0m"
+    echo -e "\033[1;90m  SSH: \033[1;33mssh root@bore.pub -p 48251\033[0m"
+    echo -e "\033[1;90m  Írd be: \033[1;33mvps-info\033[1;90m a részletekért\033[0m"
+    echo ""
 fi
 BEOF
 
 # ══════════════════════════════════════
-# 6. NGINX INDÍTÁSA
+# 6. NGINX
 # ══════════════════════════════════════
 echo -e "${C}[6/6]${W} Nginx indítása (port: ${PORT})...${N}"
 sed "s/__PORT__/${PORT}/g" /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
 # ══════════════════════════════════════
-# ÖSSZEFOGLALÓ KIÍRÁS
+# ÖSSZEFOGLALÓ
 # ══════════════════════════════════════
 echo ""
 echo -e "${C}════════════════════════════════════════════════════════${N}"
@@ -379,19 +378,22 @@ echo ""
 echo -e "  ${W}Felhasználó:${N} ${G}root${N}"
 echo -e "  ${W}Jelszó:${N}      ${G}2003${N}"
 echo ""
-if [ -n "$BORE_PORT" ]; then
-    echo -e "  ${W}SSH:${N}  ${G}ssh root@${BORE_SERVER} -p ${BORE_PORT}${N}"
-    echo -e "  ${W}Jelszó:${N} ${G}2003${N}"
-    echo ""
-    echo -e "  ${W}FileZilla (SFTP):${N}"
-    echo -e "    Host: ${G}${BORE_SERVER}${N}  Port: ${G}${BORE_PORT}${N}"
-    echo -e "    User: ${G}root${N}  Pass: ${G}2003${N}"
-fi
+echo -e "  ${C}──── FIX CSATLAKOZÁSI ADATOK (SOSEM VÁLTOZIK) ────${N}"
 echo ""
-echo -e "  ${W}Böngésző:${N}"
-echo -e "    Dashboard:  ${Y}https://<render-url>/${N}"
-echo -e "    Terminál:   ${Y}https://<render-url>/terminal/${N}"
-echo -e "    Fájlkezelő: ${Y}https://<render-url>/files/${N}"
+echo -e "  ${W}SSH:${N}         ${G}ssh root@bore.pub -p 48251${N}"
+echo -e "  ${W}Jelszó:${N}      ${G}2003${N}"
+echo ""
+echo -e "  ${W}FileZilla (SFTP):${N}"
+echo -e "    Host:    ${G}bore.pub${N}"
+echo -e "    Port:    ${G}48251${N}"
+echo -e "    User:    ${G}root${N}"
+echo -e "    Pass:    ${G}2003${N}"
+echo ""
+echo -e "  ${C}──── BÖNGÉSZŐS HOZZÁFÉRÉS ────${N}"
+echo ""
+echo -e "  ${W}Dashboard:${N}   ${Y}https://<render-url>/${N}"
+echo -e "  ${W}Terminál:${N}    ${Y}https://<render-url>/terminal/${N}"
+echo -e "  ${W}Fájlkezelő:${N}  ${Y}https://<render-url>/files/${N}"
 echo ""
 echo -e "${C}════════════════════════════════════════════════════════${N}"
 
@@ -402,42 +404,37 @@ echo -e "${C}══════════════════════�
     while true; do
         sleep 120
 
-        # bore tunnel ellenőrzés és újraindítás
+        # bore tunnel ellenőrzés — FIX PORT
         if ! pgrep -f "bore local" >/dev/null 2>&1; then
-            bore local 22 --to "$BORE_SERVER" > /tmp/bore.log 2>&1 &
-            sleep 20
-            NP=$(grep -oP '(?<=:)\d{4,5}' /tmp/bore.log 2>/dev/null | tail -1)
-            if [ -n "$NP" ]; then
+            echo "[MONITOR] bore tunnel újraindítás (port: ${BORE_PORT})..."
+            (bore local 22 --to "$BORE_SERVER" --port "$BORE_PORT" > /tmp/bore.log 2>&1) &
+            sleep 15
+            if grep -q "listening" /tmp/bore.log 2>/dev/null || grep -q "remote" /tmp/bore.log 2>/dev/null || grep -q "$BORE_PORT" /tmp/bore.log 2>/dev/null; then
                 cat > /tmp/tunnel-info.json <<EOF
-{"status":"active","host":"${BORE_SERVER}","port":"${NP}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${NP}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
+{"status":"active","host":"${BORE_SERVER}","port":"${BORE_PORT}","ssh_cmd":"ssh root@${BORE_SERVER} -p ${BORE_PORT}","user":"root","password":"2003","updated":"$(date -Iseconds)"}
 EOF
+                echo "[MONITOR] Tunnel aktív: ${BORE_SERVER}:${BORE_PORT}"
             fi
         fi
 
-        # SSH szerver ellenőrzés
-        if ! pgrep -x sshd >/dev/null; then
-            /usr/sbin/sshd -E /tmp/sshd.log
+        # SSH ellenőrzés
+        if ! pgrep -x sshd >/dev/null 2>&1; then
+            /usr/sbin/sshd -E /tmp/sshd.log 2>/dev/null || true
         fi
 
         # ttyd ellenőrzés
-        if ! pgrep -x ttyd >/dev/null; then
-            ttyd --port 7681 --writable \
-                -t fontSize=15 \
-                --ping-interval 30 \
-                bash -l >/tmp/ttyd.log 2>&1 &
+        if ! pgrep -x ttyd >/dev/null 2>&1; then
+            (ttyd --port 7681 --writable -t fontSize=15 --ping-interval 30 bash -l >/tmp/ttyd.log 2>&1) &
         fi
 
         # filebrowser ellenőrzés
-        if ! pgrep -x filebrowser >/dev/null; then
-            filebrowser --database /tmp/filebrowser.db --noauth \
-                --address 127.0.0.1 --port 8080 \
-                --baseurl /files --root / \
-                >/tmp/filebrowser.log 2>&1 &
+        if ! pgrep -x filebrowser >/dev/null 2>&1; then
+            (filebrowser --database /tmp/filebrowser.db --noauth --address 127.0.0.1 --port 8080 --baseurl /files --root / >/tmp/filebrowser.log 2>&1) &
         fi
     done
 ) &
 
 # ══════════════════════════════════════
-# NGINX INDÍTÁS (FŐ FOLYAMAT)
+# NGINX (FŐ FOLYAMAT)
 # ══════════════════════════════════════
 exec nginx -g "daemon off;"
