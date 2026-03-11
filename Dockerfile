@@ -21,15 +21,16 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
 # PIP engedélyezés
 RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED
 
-# SFTP-SERVER — minden lehetséges helyre symlink
-RUN mkdir -p /usr/libexec && \
-    ln -sf /usr/lib/openssh/sftp-server /usr/libexec/sftp-server && \
-    ln -sf /usr/lib/openssh/sftp-server /usr/local/bin/sftp-server && \
-    ln -sf /usr/lib/openssh/sftp-server /usr/bin/sftp-server && \
-    chmod +x /usr/lib/openssh/sftp-server && \
-    echo "SFTP-server elérési utak:" && \
-    ls -la /usr/lib/openssh/sftp-server && \
-    ls -la /usr/libexec/sftp-server
+# SFTP-SERVER symlink MINDEN lehetséges helyre
+RUN mkdir -p /usr/libexec /usr/lib/sftp && \
+    SFTP_BIN=$(find / -name "sftp-server" -type f 2>/dev/null | head -1) && \
+    echo "SFTP-server megtalálva: ${SFTP_BIN}" && \
+    ln -sf "${SFTP_BIN}" /usr/libexec/sftp-server && \
+    ln -sf "${SFTP_BIN}" /usr/local/bin/sftp-server && \
+    ln -sf "${SFTP_BIN}" /usr/bin/sftp-server && \
+    ln -sf "${SFTP_BIN}" /usr/lib/sftp-server && \
+    chmod +x "${SFTP_BIN}" && \
+    ls -la /usr/libexec/sftp-server /usr/lib/openssh/sftp-server
 
 RUN locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8
@@ -55,6 +56,7 @@ RUN cd /tmp && \
     rm -f filebrowser.tar.gz LICENSE README.md && \
     /usr/local/bin/filebrowser version
 
+# Dropbear SSH kulcsok
 RUN rm -f /etc/dropbear/dropbear_rsa_host_key \
           /etc/dropbear/dropbear_ecdsa_host_key \
           /etc/dropbear/dropbear_ed25519_host_key && \
@@ -63,6 +65,7 @@ RUN rm -f /etc/dropbear/dropbear_rsa_host_key \
     dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key && \
     dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key
 
+# Felhasználók
 RUN echo 'root:2003' | chpasswd && \
     sed -i 's|root:x:0:0:root:/root:.*|root:x:0:0:root:/root:/bin/bash|' /etc/passwd
 
