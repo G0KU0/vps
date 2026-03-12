@@ -21,7 +21,7 @@ echo -e "${C}       ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒
 echo -e "${C}       ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░${N}"
 echo -e "${C}      ░▒▓█▓▒░ ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░${N}"
 echo -e "${C}      ░▒▓█▓▒░  ░▒▓██████▓▒░ ░▒▓██████▓▒░   ░▒▓█▓▒░${N}"
-echo -e "${D}           Render.com VPS | ${C}Modified by 7oq1_${N}"
+echo -e "${D}           Render.com VPS | ${C}Modified by szaby${N}"
 echo -e "${C}════════════════════════════════════════════════════════${N}"
 echo ""
 
@@ -435,7 +435,7 @@ case $- in
 esac
 # >>> SFTP JAVÍTÁS VÉGE <<<
 
-export PS1='\[\033[01;32m\]\u@7oq1-vps\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+export PS1='\[\033[01;32m\]\u@szaby\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export TERM=xterm-256color
 alias ls='ls --color=auto'
@@ -447,7 +447,7 @@ if [ -z "$VPS_GREETED" ]; then
     export VPS_GREETED=1
     echo ""
     echo -e "\033[1;36m  ═════════════════════════════════════════\033[0m"
-    echo -e "\033[1;36m   7oq1_ VPS — ROOT\033[0m"
+    echo -e "\033[1;36m   Szaby VPS — ROOT\033[0m"
     echo -e "\033[1;36m  ═════════════════════════════════════════\033[0m"
     echo ""
     echo -e "\033[1;37m  Alap parancsok:\033[0m"
@@ -476,7 +476,7 @@ cat > /var/www/html/index.html <<'HTMLEOF'
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>7oq1_ Ubuntu VPS</title>
+<title>Szaby Ubuntu VPS</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,sans-serif;padding:20px}
@@ -507,7 +507,7 @@ pre{background:#0d1117;padding:15px;border-radius:6px;color:#7ee787;font-family:
        ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░
       ░▒▓█▓▒░  ░▒▓██████▓▒░ ░▒▓██████▓▒░   ░▒▓█▓▒░
 </div>
-<div class="sub">Render.com Ubuntu VPS — Modified by 7oq1_</div>
+<div class="sub">Render.com Ubuntu VPS — Modified by szaby</div>
 
 <div class="status" id="status"><span class="loading">🔄 Betöltés...</span></div>
 
