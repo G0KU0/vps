@@ -366,7 +366,7 @@ echo -e "  ${G}✓${N} Persistent Process Kezelő telepítve"
 echo -e "  ${D}  bg-start, bg-stop, bg-list, bg-logs, bg-attach, bg-restart, bg-stopall${N}"
 
 # ══════════════════════════════════════
-# 6. SEGÉDPARANCSOK
+# 6. SEGÉDPARANCSOK ÉS BASHRC (SFTP JAVÍTÁSSAL)
 # ══════════════════════════════════════
 echo -e "${C}[6/6]${W} Segédparancsok...${N}"
 
@@ -426,6 +426,15 @@ VREOF
 chmod +x /usr/local/bin/vps-tunnel-restart
 
 cat > /root/.bashrc << 'BEOF'
+# >>> SFTP JAVÍTÁS KEZDETE <<<
+# Ha a kapcsolat nem interaktív (pl. SFTP program csatlakozik), azonnal kilép a scriptből,
+# így nem dobja fel a színes menüt, és nem zavarja meg a FileZillát.
+case $- in
+    *i*) ;;
+      *) return;;
+esac
+# >>> SFTP JAVÍTÁS VÉGE <<<
+
 export PS1='\[\033[01;32m\]\u@7oq1-vps\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export TERM=xterm-256color
