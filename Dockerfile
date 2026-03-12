@@ -53,6 +53,10 @@ RUN rm -f /etc/dropbear/dropbear_rsa_host_key \
     dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key && \
     dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key
 
+# --- JAVÍTÁS AZ SFTP-HEZ ---
+RUN mkdir -p /usr/libexec && ln -s /usr/lib/openssh/sftp-server /usr/libexec/sftp-server
+# ---------------------------
+
 RUN echo 'root:2003' | chpasswd && \
     sed -i 's|root:x:0:0:root:/root:.*|root:x:0:0:root:/root:/bin/bash|' /etc/passwd
 
