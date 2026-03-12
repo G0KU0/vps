@@ -525,7 +525,7 @@ pre{background:#0d1117;padding:15px;border-radius:6px;color:#7ee787;font-family:
 <div class="row">
     <div class="card full">
         <h2>🖥️ Web Terminál</h2>
-        <a href="/terminal" class="btn" target="_blank">🖥️ Terminál megnyitása</a>
+        <a href="/terminal/" class="btn" target="_blank">🖥️ Terminál megnyitása</a>
         <p class="info">Teljes root Linux shell — nem kell semmi telepíteni!</p>
     </div>
 </div>
@@ -533,7 +533,7 @@ pre{background:#0d1117;padding:15px;border-radius:6px;color:#7ee787;font-family:
 <div class="row">
     <div class="card full">
         <h2>📂 Webes Fájlkezelő</h2>
-        <a href="/files" class="btn" target="_blank" style="background:#1f6feb">📂 Fájlkezelő megnyitása</a>
+        <a href="/files/" class="btn" target="_blank" style="background:#1f6feb">📂 Fájlkezelő megnyitása</a>
         <p class="info">Drag & drop fájlfeltöltés — böngészőből!</p>
     </div>
 </div>
@@ -542,7 +542,7 @@ pre{background:#0d1117;padding:15px;border-radius:6px;color:#7ee787;font-family:
     <div class="card full">
         <h2>🖥️ Beágyazott Terminál</h2>
         <div style="background:#000;border-radius:8px;overflow:hidden;height:500px">
-            <iframe src="/terminal" style="width:100%;height:100%;border:none"></iframe>
+            <iframe src="/terminal/" style="width:100%;height:100%;border:none"></iframe>
         </div>
     </div>
 </div>
